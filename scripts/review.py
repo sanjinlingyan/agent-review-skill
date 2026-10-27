@@ -22,6 +22,7 @@ def main(argv=None):
     run = commands.add_parser("run", help="冻结依据和交付，不生成正式报告")
     run.add_argument("--submission", type=Path)
     run.add_argument("--standards", type=Path)
+    run.add_argument("--standards-bundle", type=Path)
     run.add_argument("--original", type=Path)
     run.add_argument("--batch", type=Path)
     run.add_argument("--out", type=Path)
@@ -47,15 +48,15 @@ def main(argv=None):
         elif args.command == "run":
             if bool(args.batch) == bool(args.submission):
                 raise ReviewError("使用 --submission 或 --batch 其中之一")
-            if not args.standards:
-                raise ReviewError("需要 --standards")
+            if bool(args.standards) == bool(args.standards_bundle):
+                raise ReviewError("提供 --standards 或 --standards-bundle 其中之一")
             if args.batch:
                 if args.original:
                     raise ReviewError("--batch 与 --original 不能混用；原题写在批次清单里")
                 pairs, scope = load_batch(args.batch.resolve())
-                run_dir = prepare(pairs, args.standards, args.out, batch_path=args.batch.resolve(), scope=scope, virtual_suite=args.virtual_suite)
+                run_dir = prepare(pairs, args.standards, args.out, batch_path=args.batch.resolve(), scope=scope, virtual_suite=args.virtual_suite, standards_bundle=args.standards_bundle)
             else:
-                run_dir = prepare([(args.original, args.submission)], args.standards, args.out, virtual_suite=args.virtual_suite)
+                run_dir = prepare([(args.original, args.submission)], args.standards, args.out, virtual_suite=args.virtual_suite, standards_bundle=args.standards_bundle)
             print(json.dumps({
                 "run": str(run_dir), "phase": "agent_review_required", "review_completed": False,
                 "message": "已冻结输入。请阅读 _internal/source-inventory.json，写入 catalog.json 和 results.json，然后 finalize。不要在这一步停止，也不要生成正式报告。",

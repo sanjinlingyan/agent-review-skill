@@ -164,6 +164,11 @@ def render_html(state, rows) -> str:
         problems.append("<li>本次适用验收要求全部通过。</li>" if rows else "<li>没有适用验收项。零分母不记为通过。</li>")
     subjects = "；".join(f'{case["task_id"]} / {case.get("revision") or "冻结提交"}' for case in state["cases"]) or "批次范围"
     verdict = verdict_of(rows)
+    diagnostics = state.get("virtual_diagnostics", [])
+    diagnostic_html = ""
+    if diagnostics:
+        diagnostic_html = '<section class="panel"><h2>【虚拟测试集】诊断观察（不计成败分母）</h2>' + "".join(
+            f'<article><h3>{esc(d["title"])}</h3><p>{esc(d["source_locator"])}</p><pre style="white-space:pre-wrap">{esc(d["values"])}</pre><p>{esc(d["reason"])}</p></article>' for d in diagnostics) + '</section>'
     title = "内部综合审查结论（含虚拟测试）" if hypothetical else "甲方验收报告"
     notice = ""
     if hypothetical:
@@ -185,7 +190,7 @@ def render_html(state, rows) -> str:
 <section class="panel"><h2>影响验收的主要问题</h2><ol>{"".join(problems)}</ol></section>
 <nav class="panel"><h2>按文件与章节查看</h2><ol>{"".join(nav)}</ol></nav>
 <div class="filter"><label><input type="radio" name="view" checked> 全部</label>　<label><input id="fail-only" type="radio" name="view"> 仅未通过</label><small>　统计始终对应全部适用要求</small></div>
-{"".join(bodies)}</main></body></html>'''
+{"".join(bodies)}{diagnostic_html}</main></body></html>'''
 
 
 def render_repair(state, rows) -> str:
@@ -221,5 +226,9 @@ def render_repair(state, rows) -> str:
         lines.append("")
     if not found:
         lines += ["本次适用验收项没有未通过记录。", ""]
+    if state.get("virtual_diagnostics"):
+        lines += ["## 【虚拟测试集】诊断观察（不计成败分母，不补造修复项）", ""]
+        for item in state["virtual_diagnostics"]:
+            lines += [f"- {md(item['title'])}：{md(item['values'])}；{md(item['source_locator'])}", ""]
     lines += ["## 复验要求", "", "提交新版本，按同一适用条款重新审查；不能仅更新哈希、复制旧签收或手改审查结论。", ""]
     return "\n".join(lines)

@@ -1,5 +1,7 @@
 # 接口
 
+`run --standards-bundle <入口.json>` 可替代正文目录，按显式清单冻结官方原文并隔离辅助资料。v2 虚拟套件支持原生工件、多目标类型化预期、当前交付流程核查与无成败预期的诊断观察；详见 [增量协议](virtual-tests.md)。旧套件与旧正文目录接口继续兼容。
+
 可选虚拟测试入口 `run --virtual-suite <suite.json>` 及 `virtual-prepare`、`virtual-execute`、`virtual-collect` 见 [虚拟测试集接口](virtual-tests.md)。未启用套件保持原接口。启用后 `finalize` 返回内部综合结论及 `official`、`virtual` 分项统计和 `human_notice`；`status` 返回 `virtual_tests` 完成情况。虚拟记录在 `_internal/virtual/`，不混入官方 `catalog.json`。
 
 用户不手写这些文件。Agent 在运行目录的 `_internal/` 里维护它们。示例都是虚构字段。

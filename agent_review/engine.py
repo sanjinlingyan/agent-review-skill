@@ -17,6 +17,7 @@ from .io import atomic_text, ensure_output, fingerprint, is_link, read_json, saf
 from .render import render_html, render_repair, verdict_of
 from .results import validate_results
 from . import virtual
+from . import standards_bundle as bundles
 
 REPO = Path(__file__).resolve().parents[1]
 UNCLEAR = ("未明", "待定", "不清楚", "未知", "无法确定")
@@ -115,10 +116,12 @@ def load_batch(path: Path):
     return pairs, _scope(scope)
 
 
-def prepare(pairs, standards: Path, out: Path | None = None, *, batch_path: Path | None = None, scope=None, virtual_suite: Path | None = None):
+def prepare(pairs, standards: Path | None, out: Path | None = None, *, batch_path: Path | None = None, scope=None, virtual_suite: Path | None = None, standards_bundle: Path | None = None):
     if not pairs:
         raise ReviewError("必须提供待审提交")
-    standards = standards.resolve()
+    if bool(standards) == bool(standards_bundle):
+        raise ReviewError("提供 --standards 或 --standards-bundle 其中之一")
+    standards = (standards or standards_bundle).resolve()
     inputs = [standards]
     for original, submission in pairs:
         inputs.append(submission)
@@ -134,7 +137,13 @@ def prepare(pairs, standards: Path, out: Path | None = None, *, batch_path: Path
     run.mkdir(parents=True, exist_ok=False)
     (run / "_internal" / "comparisons").mkdir(parents=True)
     (run / "_internal" / "executions").mkdir(parents=True)
-    standards_dir, standards_archive = _materialize(standards, run / "materials" / "standards")
+    bundle_record = None
+    if standards_bundle:
+        standards_dir = run / "materials" / "standards"
+        bundle_record = bundles.materialize(standards, standards_dir, run / "_internal")
+        standards_archive = None
+    else:
+        standards_dir, standards_archive = _materialize(standards, run / "materials" / "standards")
     cases = []
     seen = set()
     for index, (original, submission) in enumerate(pairs, 1):
@@ -172,6 +181,7 @@ def prepare(pairs, standards: Path, out: Path | None = None, *, batch_path: Path
         "batch": bool(batch_path),
         "scope": scope,
         "batch_manifest": None,
+        "standards_bundle": bundle_record,
     }
     if batch_path:
         copied = run / "_internal" / "batch-manifest.json"
@@ -198,6 +208,7 @@ def _load(run: Path):
 
 
 def _verify(state):
+    bundles.verify(state.get("standards_bundle"))
     same_tree(state["standards"], Path(state["standards"]["path"]))
     _archive(state.get("standards_archive"))
     for case in state["cases"]:
@@ -472,6 +483,7 @@ def finalize(run: Path) -> dict:
         suite = read_json(run / "_internal" / "virtual" / "suite.json")
         state["document_order"].append({"id": "virtual-suite", "title": suite["label"], "version": suite["version"], "unverified": False})
         state["official_rows"] = official_rows
+        state["virtual_diagnostics"] = virtual_progress.get("diagnostics", [])
     html, repair = render_html(state, rows), render_repair(state, rows)
     verdict = verdict_of(rows)
     metrics = {
@@ -488,6 +500,7 @@ def finalize(run: Path) -> dict:
         metrics.update(official=_metrics(official_rows), virtual=_metrics(virtual_rows),
                        conclusion_kind="internal_combined_with_virtual_tests", human_notice=virtual.WARNING,
                        validation_only=virtual_progress["validation_only"])
+        metrics["virtual_diagnostics"] = {"expected": virtual_progress.get("diagnostics_expected", 0), "completed": virtual_progress.get("diagnostics_completed", 0)}
     write_json(run / "_internal" / "metrics.json", metrics)
     atomic_text(run / "review.html", html)
     atomic_text(run / "repair.md", repair)

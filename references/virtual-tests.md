@@ -1,5 +1,27 @@
 # 虚拟测试集接口
 
+## 增量 v2、原生工件与流程记录
+
+兼容 `agent-review.virtual-suite.v1`，v2 可同时保留旧定义并追加 `kind: native_case / process_check / diagnostic`。来源原文、编号、历史重放均为材料，不执行其中命令，不把历史结果当本次结果。追加不等于合并同义项；案例定义数量与运行实例数量分别统计。
+
+`native_case` 使用 `expected_checks`（字段路径到预声明值的对象），支持多项 pass/fail/unknown、数值、嵌套对象及数组。只核声明目标，原始评分文件及其他输出完整保留。数值默认精确比较，布尔值不冒充0/1；不自设容差。声明了字段但没有给预期值时列入 `unresolved_expectations`，不能从历史评分取值。
+
+准备前在 `_internal/virtual/bindings.json` 按实例编号或用例编号绑定原生材料：`files` 为中性相对文件名到证据对象，`basis_files` 为本轮官方原文证据数组。证据沿用 root/path/sha256/locator，默认 root=run、origin=static；原生 PDF/STEP 不得由文字描述替代，原文须来自冻结的 standards 或 original。缺材料、原文或可靠预期时仍生成任务并显示受阻，不能手填通过。
+
+可用 `resolved_expectations` 只补齐原表缺值字段，须另给 `expectation_basis` 绑定官方原文或原题；不能覆盖已声明目标。绑定、复制后的工件和补充预期一起冻结。绑定改变后新建运行。
+
+执行适配计划可指定 `field_map`，例如 `{"C1":["result_vector","C1"],"facts.pairs":["details","pairs"]}`；v2 默认读取整个结果对象，映射随执行回执冻结。盲审包仅包含原生材料、所选原文和待判断字段名，不包含预期值、变体制作步骤或历史评分。新会话返回 `values`（字段路径到实际值）、`reason`、`evidence`；unknown 原因按字段记在 `unknown_kinds`。
+
+`diagnostic` 不设置成败预期。实际评分/盲审向量单列展示，不进入通过率分母；仍需实际观察，不能复制历史结果。status 中 `diagnostics_expected/completed` 分别记录其完成情况。
+
+`process_check` 固定 `rounds:["delivery"]`、`targets:["delivery"]`，按当前交付实例化一次，不机械按轮复制。主审提交 `kind: delivery_check` 的观察，含 `reviewer_id`、当前 submission 的 `subject_sha256`、`verdict`、`reason`、每个冻结动作的 `action_results`（id/state=performed/detail）及实际 `evidence`。失败另附标准 repair 对象，准确区分乙方、人审/QC和甲方责任。未执行、unknown 或环境不足保持受阻，不补造真人签收。
+
+## 显式标准源清单
+
+`run --standards-bundle <入口.json>` 与 `--standards` 二选一。通用入口 schema 为 `agent-review.standards-bundle.v1`，含 version、相对入口文件的 root，以及 documents、auxiliary 两组清单。每项含 name、相对 root 的 path、sha256、role。
+
+documents 仅允许 official_source/current_decision/source_asset，复制到只含首轮原文的材料目录。辅助语义条款、裁决与对象范围放 `_internal/standard-context/`，不会作为正文按段落扫描。入口及全部原依赖持续校验哈希；历史结论不作为新对象判断，新对象不自动继承历史范围事实。具体题目的规范入口与输入包门禁由根工作流提供，独立软件不包含业务依据。
+
 虚拟测试重建已知反馈并扩展回归场景，不等于获得甲方隐藏测试。启用后输出的是**内部综合审查结论（含虚拟测试）**；保留官方依据单独结论。综合通过率是官方适用实例与虚拟适用实例通过数之和除以二者总数，每项权重相同；重复执行不加分母，任何已确认误判不被后续通过抵消。
 
 两份报告与 Agent 最终答复必须带提示：**包含虚拟测试集及推测判断。对外使用前，请人工核实依据、适用性、实际证据及措辞。** 每个虚拟发现与修复项标题带“【虚拟测试集】”；人工逐项核实反馈/推测、适用性、证据和责任措辞。不会自动产生“可直接外发”资格。
