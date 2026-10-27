@@ -16,6 +16,7 @@ from .inventory import build_inventory
 from .io import atomic_text, ensure_output, fingerprint, is_link, read_json, safe_extract, same_tree, sha, sha_bytes, write_json
 from .render import render_html, render_repair, verdict_of
 from .results import validate_results
+from . import virtual
 
 REPO = Path(__file__).resolve().parents[1]
 UNCLEAR = ("未明", "待定", "不清楚", "未知", "无法确定")
@@ -114,7 +115,7 @@ def load_batch(path: Path):
     return pairs, _scope(scope)
 
 
-def prepare(pairs, standards: Path, out: Path | None = None, *, batch_path: Path | None = None, scope=None):
+def prepare(pairs, standards: Path, out: Path | None = None, *, batch_path: Path | None = None, scope=None, virtual_suite: Path | None = None):
     if not pairs:
         raise ReviewError("必须提供待审提交")
     standards = standards.resolve()
@@ -125,6 +126,8 @@ def prepare(pairs, standards: Path, out: Path | None = None, *, batch_path: Path
             inputs.append(original)
     if batch_path:
         inputs.append(batch_path)
+    if virtual_suite:
+        inputs.append(virtual_suite)
     out = ensure_output(out or REPO.parent / ".agent-review" / "runs", REPO, inputs)
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid4().hex[:10]
     run = out / run_id
@@ -174,6 +177,8 @@ def prepare(pairs, standards: Path, out: Path | None = None, *, batch_path: Path
         copied = run / "_internal" / "batch-manifest.json"
         copied.write_bytes(batch_path.read_bytes())
         state["batch_manifest"] = {"path": str(batch_path.resolve()), "sha256": sha(batch_path)}
+    if virtual_suite:
+        state["virtual_suite"] = virtual.attach(virtual_suite, run)
     write_json(run / "_internal" / "run.json", state)
     write_json(run / "_internal" / "source-inventory.json", build_inventory(standards_dir))
     return run
@@ -187,6 +192,7 @@ def _load(run: Path):
     if state.get("implementation_sha256") != implementation_sha256():
         raise ReviewError("审查代码已变化，请新建运行")
     _verify(state)
+    virtual.verify(run, state)
     state["run_path"] = str(run)
     return run, state
 
@@ -419,13 +425,26 @@ def status(run: Path) -> dict:
         except ReviewIncomplete as exc:
             ready = False
             blockers.append({"reason": str(exc), "owner": "reviewer", "next_action": "完成范围对账后再定稿"})
+    virtual_rows, virtual_progress = [], {"enabled": False}
+    if state.get("virtual_suite"):
+        try:
+            virtual_rows, virtual_progress = virtual.rows(run, state)
+            blockers.extend(virtual_progress["blockers"])
+            ready = ready and not virtual_progress["blockers"]
+        except ReviewIncomplete as exc:
+            ready = False
+            virtual_progress = {"enabled": True, "expected": None, "completed": 0, "blockers": [{"reason": str(exc), "owner": "reviewer", "next_action": "官方首轮完成后 virtual-prepare"}]}
+            blockers.extend(virtual_progress["blockers"])
     return {
         "run_id": state["run_id"], "phase": "ready_for_finalization" if ready else "review_in_progress",
         "review_completed": False, "formal_output": False, "fingerprint_ok": True,
-        "expected": len(expected), "recorded": len(rows), "completed": completed,
-        "pass": sum(row["status"] == "pass" for row in rows),
-        "fail": sum(row["status"] == "fail" for row in rows),
+        "expected": len(expected) + virtual_progress.get("expected", 0) if virtual_progress.get("expected", 0) is not None else None,
+        "recorded": len(rows) + len(virtual_rows), "completed": completed + len(virtual_rows),
+        "pass": sum(row["status"] == "pass" for row in rows + virtual_rows),
+        "fail": sum(row["status"] == "fail" for row in rows + virtual_rows),
+        "official": {**_metrics(rows), "expected": len(expected), "completed": completed},
         "blocked": len(blockers), "blockers": blockers, "batch_scope": batch_scope,
+        "virtual_tests": virtual_progress,
         "message": "预期项目见 _internal/obligations.json。全部完成后再 finalize。",
     }
 
@@ -445,7 +464,14 @@ def finalize(run: Path) -> dict:
     _comparison(run, rows)
     _model_change(run, rows)
     _verify(state)
+    official_rows = list(rows)
+    virtual_rows, virtual_progress = virtual.rows(run, state, final=True)
+    rows.extend(virtual_rows)
     state["document_order"] = _documents(catalog, [row for row in rows if row["clause_id"] == "BATCH-MISSING"])
+    if state.get("virtual_suite"):
+        suite = read_json(run / "_internal" / "virtual" / "suite.json")
+        state["document_order"].append({"id": "virtual-suite", "title": suite["label"], "version": suite["version"], "unverified": False})
+        state["official_rows"] = official_rows
     html, repair = render_html(state, rows), render_repair(state, rows)
     verdict = verdict_of(rows)
     metrics = {
@@ -458,12 +484,45 @@ def finalize(run: Path) -> dict:
         "instances": [{"instance_id": row["instance_id"], "status": row["status"], "clause_id": row["clause_id"],
                        "task_id": row["task_id"], "round": row["round"]} for row in rows],
     }
+    if state.get("virtual_suite"):
+        metrics.update(official=_metrics(official_rows), virtual=_metrics(virtual_rows),
+                       conclusion_kind="internal_combined_with_virtual_tests", human_notice=virtual.WARNING,
+                       validation_only=virtual_progress["validation_only"])
     write_json(run / "_internal" / "metrics.json", metrics)
     atomic_text(run / "review.html", html)
     atomic_text(run / "repair.md", repair)
     return {"verdict": verdict, "review_completed": True, "completion_rate": metrics["completion_rate"],
             "pass_rate": metrics["pass_rate"], "human_report": str(run / "review.html"),
-            "agent_report": str(run / "repair.md"), "run_id": state["run_id"]}
+            "agent_report": str(run / "repair.md"), "run_id": state["run_id"],
+            **({"human_notice": virtual.WARNING, "official": metrics["official"], "virtual": metrics["virtual"]} if state.get("virtual_suite") else {})}
+
+
+def _metrics(rows):
+    return {"total": len(rows), "pass": sum(row["status"] == "pass" for row in rows),
+            "verdict": verdict_of(rows), "pass_rate": sum(row["status"] == "pass" for row in rows) / len(rows) if rows else None}
+
+
+def virtual_prepare(run: Path):
+    run, state = _load(run)
+    catalog, expected = _catalog(run, state)
+    if catalog is None or _results_payload(run) is None:
+        raise ReviewIncomplete("先完成官方依据的首轮清单和逐项判断")
+    payload = _results_payload(run)
+    rows = validate_results(expected, payload, state, run, final=True)
+    rows.extend(_batch_rows(state, payload, run))
+    _comparison(run, rows)
+    _model_change(run, rows)
+    return virtual.prepare(run, state, payload)
+
+
+def virtual_execute(run: Path, plan: Path):
+    run, state = _load(run)
+    return virtual.execute(run, state, plan)
+
+
+def virtual_collect(run: Path):
+    run, state = _load(run)
+    return virtual.collect(run, state)
 
 
 def execute(run: Path, plan: Path) -> dict:

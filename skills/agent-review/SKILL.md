@@ -24,8 +24,11 @@ description: >-
 4. 两遍核对都记在 `coverage_audits` 里，审查者都是你自己。第二遍的方法写“从原文反查”。
 5. 运行 `status --run`。按 `_internal/obligations.json` 的实例阅读交付正文、图和记录，写 `results.json`。判断规则见 `references/judgment.md`。
 6. 需要运行程序时，先看入口和读写范围，把计划写成 JSON，再 `execute`。没跑过的不要写成实测。
-7. 全部适用项完成后再 `finalize`。把 `review.html` 和 `repair.md` 的绝对路径交给用户。
-8. 受阻就说明已完成范围、原因、责任和下一步，并继续能独立完成的项目。不要生成正式报告。
+7. 启用 `--virtual-suite` 时，官方首轮全部完成后执行 `virtual-prepare`，再按 `references/virtual-tests.md` 在副本运行评分器测试，并为每个 Agent 自测创建不继承历史的新会话盲审。只交付中性包，不交预期；实际回执齐备后 `virtual-collect`。虚拟项未完成或受阻不得定稿。
+8. 全部适用项完成后再 `finalize`。把 `review.html` 和 `repair.md` 的绝对路径交给用户。含虚拟项时说明这是内部综合结论，并重复“包含虚拟测试集及推测判断。对外使用前，请人工核实依据、适用性、实际证据及措辞。”
+9. 受阻就说明已完成范围、原因、责任和下一步，并继续能独立完成的项目。不要生成正式报告。
+
+作为新会话盲审者时，仅读给定包的任务、题设与实际材料，输出 pass/fail/unknown、理由和文件哈希定位；不读套件或预期，不递归启动完整 run。不把本次样例判断冒充完整业务验收。
 
 ## 边界
 

@@ -1,5 +1,7 @@
 # 接口
 
+可选虚拟测试入口 `run --virtual-suite <suite.json>` 及 `virtual-prepare`、`virtual-execute`、`virtual-collect` 见 [虚拟测试集接口](virtual-tests.md)。未启用套件保持原接口。启用后 `finalize` 返回内部综合结论及 `official`、`virtual` 分项统计和 `human_notice`；`status` 返回 `virtual_tests` 完成情况。虚拟记录在 `_internal/virtual/`，不混入官方 `catalog.json`。
+
 用户不手写这些文件。Agent 在运行目录的 `_internal/` 里维护它们。示例都是虚构字段。
 
 ## 命令

@@ -11,7 +11,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from agent_review.demo import create_demo
-from agent_review.engine import execute, finalize, load_batch, prepare, status
+from agent_review.engine import execute, finalize, load_batch, prepare, status, virtual_prepare, virtual_execute, virtual_collect
 from agent_review.errors import ReviewError, ReviewIncomplete
 
 
@@ -25,6 +25,12 @@ def main(argv=None):
     run.add_argument("--original", type=Path)
     run.add_argument("--batch", type=Path)
     run.add_argument("--out", type=Path)
+    run.add_argument("--virtual-suite", type=Path)
+    for name in ("virtual-prepare", "virtual-execute", "virtual-collect"):
+        sub = commands.add_parser(name, help="虚拟测试集：冻结、执行或收集")
+        sub.add_argument("--run", type=Path, required=True)
+        if name == "virtual-execute":
+            sub.add_argument("--plan", type=Path, required=True)
     view = commands.add_parser("status", help="查看进度，不生成正式报告")
     view.add_argument("--run", type=Path, required=True)
     done = commands.add_parser("finalize", help="校验完整判断并生成两份报告")
@@ -47,9 +53,9 @@ def main(argv=None):
                 if args.original:
                     raise ReviewError("--batch 与 --original 不能混用；原题写在批次清单里")
                 pairs, scope = load_batch(args.batch.resolve())
-                run_dir = prepare(pairs, args.standards, args.out, batch_path=args.batch.resolve(), scope=scope)
+                run_dir = prepare(pairs, args.standards, args.out, batch_path=args.batch.resolve(), scope=scope, virtual_suite=args.virtual_suite)
             else:
-                run_dir = prepare([(args.original, args.submission)], args.standards, args.out)
+                run_dir = prepare([(args.original, args.submission)], args.standards, args.out, virtual_suite=args.virtual_suite)
             print(json.dumps({
                 "run": str(run_dir), "phase": "agent_review_required", "review_completed": False,
                 "message": "已冻结输入。请阅读 _internal/source-inventory.json，写入 catalog.json 和 results.json，然后 finalize。不要在这一步停止，也不要生成正式报告。",
@@ -58,6 +64,9 @@ def main(argv=None):
             print(json.dumps(status(args.run), ensure_ascii=False))
         elif args.command == "finalize":
             print(json.dumps(finalize(args.run), ensure_ascii=False))
+        elif args.command in {"virtual-prepare", "virtual-execute", "virtual-collect"}:
+            result = virtual_execute(args.run, args.plan) if args.command == "virtual-execute" else virtual_prepare(args.run) if args.command == "virtual-prepare" else virtual_collect(args.run)
+            print(json.dumps(result, ensure_ascii=False))
         else:
             print(json.dumps(execute(args.run, args.plan), ensure_ascii=False))
         return 0
