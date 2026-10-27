@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 import zipfile
+from unittest.mock import patch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -343,6 +344,7 @@ class ReviewFlowTest(unittest.TestCase):
         self.write_catalog(run)
         status(run)
         self.judgments(run, name="pass", unit="pass")
+        self.assertEqual(status(run)["phase"], "review_in_progress")
         with self.assertRaises(ReviewIncomplete):
             finalize(run)
         payload = read_json(run / "_internal" / "results.json")
@@ -353,6 +355,101 @@ class ReviewFlowTest(unittest.TestCase):
         self.assertEqual(result["verdict"], "fail")
         self.assertIn("未提交", (run / "review.html").read_text(encoding="utf-8"))
         self.assertIn("BATCH-MISSING", (run / "repair.md").read_text(encoding="utf-8"))
+        self.assertEqual(status(run)["phase"], "finalized")
+        self.assertTrue(status(run)["formal_output"])
+
+    def test_out_of_scope_extra_cannot_remain_in_acceptance_denominator(self):
+        from agent_review.engine import _batch_rows
+        state = {"batch": True, "scope": {"expected_ids": ["DEMO-001"]},
+                 "cases": [{"task_id": "DEMO-001"}, {"task_id": "DEMO-002"}]}
+        payload = {"batch_resolution": {"missing_ids": [], "extra_ids": ["DEMO-002"],
+                   "decision": "out-of-scope", "reason": "正式名单仅包含第一个样品"}}
+        with self.assertRaisesRegex(ReviewIncomplete, "范围外"):
+            _batch_rows(state, payload, self.root)
+
+    def test_zip_without_record_keeps_filename_identity_and_rejects_duplicates(self):
+        import warnings
+        from agent_review.io import safe_extract
+        self.root.mkdir(parents=True)
+        standards = self.root / "std"
+        standards.mkdir()
+        (standards / "guide.md").write_text("样品须有名称。", encoding="utf-8")
+        archives = []
+        for name in ("sample-one", "sample-two"):
+            archive = self.root / (name + ".zip")
+            with zipfile.ZipFile(archive, "w") as package:
+                package.writestr("notes.md", "sample")
+            archives.append((None, archive))
+        run = prepare(archives, standards, self.root / "runs")
+        self.assertEqual([case["task_id"] for case in read_json(run / "_internal" / "run.json")["cases"]],
+                         ["sample-one", "sample-two"])
+        duplicate = self.root / "duplicate.zip"
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            with zipfile.ZipFile(duplicate, "w") as package:
+                package.writestr("notes.md", "first")
+                package.writestr("notes.md", "second")
+        with self.assertRaisesRegex(ReviewError, "重复"):
+            safe_extract(duplicate, self.root / "duplicate")
+        corrupt = self.root / "invalid.zip"
+        corrupt.write_bytes(b"not a zip")
+        with self.assertRaisesRegex(ReviewError, "有效"):
+            safe_extract(corrupt, self.root / "invalid")
+
+    def test_code_change_invalidates_old_run(self):
+        run = self.start()
+        with patch("agent_review.engine.implementation_sha256", return_value="changed"):
+            with self.assertRaisesRegex(ReviewError, "代码已变化"):
+                status(run)
+            with self.assertRaisesRegex(ReviewError, "代码已变化"):
+                finalize(run)
+
+    def test_duplicate_units_and_wrong_reverse_pass_are_rejected(self):
+        run = self.start()
+        inventory = read_json(run / "_internal" / "source-inventory.json")
+        catalog = self.guide_catalog(inventory)
+        catalog["documents"][0]["units"][1]["id"] = "u-intro"
+        with self.assertRaisesRegex(ReviewError, "唯一"):
+            validate_catalog(inventory, catalog)
+        catalog = self.guide_catalog(inventory)
+        catalog["coverage_audits"][0]["method"] = "从原文反查"
+        catalog["coverage_audits"][1]["method"] = "按原文分类"
+        with self.assertRaisesRegex(ReviewError, "第二遍"):
+            validate_catalog(inventory, catalog)
+
+    def test_case_specific_clause_does_not_expand_to_other_tasks(self):
+        from agent_review.catalog import instances
+        run = self.start()
+        inventory = read_json(run / "_internal" / "source-inventory.json")
+        catalog = self.guide_catalog(inventory)
+        catalog["clauses"][0]["task_ids"] = ["DEMO-001"]
+        normalized = validate_catalog(inventory, catalog)
+        cases = [{"key": "case-0001", "task_id": "DEMO-001"},
+                 {"key": "case-0002", "task_id": "DEMO-002"}]
+        rows = instances(normalized, cases)
+        self.assertEqual(len(rows), 3)
+        self.assertEqual([row["task_id"] for row in rows if row["clause_id"] == "C-NAME"], ["DEMO-001"])
+        normalized["clauses"][0]["task_ids"] = ["TYPO"]
+        with self.assertRaisesRegex(ReviewError, "题号"):
+            instances(normalized, cases)
+
+    def test_word_standard_requires_reading_instead_of_asset_exclusion(self):
+        run = self.start()
+        inventory = read_json(run / "_internal" / "source-inventory.json")
+        catalog = self.guide_catalog(inventory)
+        doc = inventory["documents"][0]
+        doc["kind"] = "manual"
+        doc["path"] = "guide.docx"
+        extracted = [{"text": p["text"], "locator": f"正文段落 {i}"}
+                     for i, p in enumerate(doc["paragraphs"], 1)]
+        doc["paragraphs"] = []
+        with self.assertRaises(ReviewIncomplete):
+            validate_catalog(inventory, catalog)
+        catalog["documents"][0]["paragraphs"] = extracted
+        normalized = validate_catalog(inventory, catalog)
+        self.assertTrue(normalized["documents"][0]["unverified_extraction"])
+        from agent_review.inventory import kind_of
+        self.assertEqual(kind_of(Path("guide.docx")), "manual")
 
     def test_catalog_order_and_empty_scope_report(self):
         standards = self.root / "std"

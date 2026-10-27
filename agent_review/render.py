@@ -136,7 +136,7 @@ def render_html(state, rows) -> str:
             body = "".join(_card(item, state, shown) for item in items)
             chapters.append(f'<section class="chapter {group}"><h3>{esc(title)}</h3><p class="stats">{summary(items)}</p>{body}</section>')
         doc_group = "passed-group" if all(item["status"] == "pass" for item in associated) else ""
-        note = " PDF 文本由审查者抽取，脚本未核对与版面一致。" if doc.get("unverified") else ""
+        note = " 原文由审查者抽取，脚本未核对与版面一致。" if doc.get("unverified") else ""
         bodies.append(
             f'<section class="document {doc_group}" id="{anchor(doc["id"])}"><h2>{esc(doc["title"])}</h2>'
             f'<p class="meta">版本：{esc(doc["version"])} · 范围：仅本题适用要求。{esc(note)}</p>'

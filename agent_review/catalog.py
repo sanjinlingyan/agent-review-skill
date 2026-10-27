@@ -55,7 +55,7 @@ def validate_catalog(inventory: dict, catalog: dict) -> dict:
             continue
         paragraphs = list(source["paragraphs"])
         unverified = False
-        if source["kind"] == "pdf":
+        if source["kind"] in {"pdf", "manual"}:
             extracted = entry.get("paragraphs")
             if not isinstance(extracted, list) or not extracted:
                 raise ReviewIncomplete(f"{source['path']} 尚未抽取，不能完成依据对账")
@@ -64,8 +64,12 @@ def validate_catalog(inventory: dict, catalog: dict) -> dict:
                 _require(isinstance(para, dict), "PDF 段落必须是对象")
                 text = _text(para.get("text"), "PDF 段落")
                 page = para.get("page")
-                _require(isinstance(page, int) and page > 0, "PDF 段落须有页码")
-                paragraphs.append({"id": f"g{index}", "block_ids": [f"p{page}-l{index}"], "text": text, "page": page})
+                if source["kind"] == "pdf":
+                    _require(type(page) is int and page > 0, "PDF 段落须有页码")
+                locator = para.get("locator")
+                if source["kind"] == "manual":
+                    locator = _text(locator, "人工抽取段落的章节、表格或版面定位")
+                paragraphs.append({"id": f"g{index}", "block_ids": [f"p{page}-l{index}"], "text": text, "page": page if source["kind"] == "pdf" else None, "locator": locator})
             unverified = True
         units = _units(entry.get("units"), paragraphs, source["path"])
         normalized.append({
@@ -124,6 +128,7 @@ def _clauses(raw, documents):
     units = {}
     for doc in documents:
         for unit in doc["units"]:
+            _require(unit["id"] not in units, f"语义单元编号必须在全部文件中唯一: {unit['id']}")
             units[unit["id"]] = (doc, unit)
     found, seen = [], set()
     for clause in raw:
@@ -171,6 +176,12 @@ def _clauses(raw, documents):
         _require(isinstance(rounds, list) and all(isinstance(item, str) and ROUND.fullmatch(item) for item in rounds), f"{clause_id} 的轮次无效")
         if scope == "batch":
             rounds = []
+        task_ids = clause.get("task_ids")
+        if task_ids is not None:
+            _require(scope == "case" and isinstance(task_ids, list) and bool(task_ids)
+                     and all(isinstance(item, str) and item.strip() for item in task_ids),
+                     f"{clause_id} 的 task_ids 须为非空题号数组且仅用于 case 条款")
+            _require(len(set(task_ids)) == len(task_ids), f"{clause_id} 的 task_ids 重复")
         found.append({
             "id": clause_id,
             "title": _text(clause.get("title"), f"{clause_id} 标题"),
@@ -178,6 +189,7 @@ def _clauses(raw, documents):
             "accept": _text(clause.get("accept"), f"{clause_id} 通过条件"),
             "strength": strength,
             "scope": scope,
+            "task_ids": task_ids,
             "rounds": rounds,
             "actions": cleaned_actions,
             "evidence_required": _text(clause.get("evidence_required"), f"{clause_id} 的证据要求"),
@@ -202,7 +214,7 @@ def _audits(raw, document_ids):
         reviewers.add(_text(audit.get("reviewer"), "核对人"))
         passes.add(audit.get("pass"))
         method = _text(audit.get("method"), "核对方法")
-        if "反查" in method or "reverse" in method.lower():
+        if audit.get("pass") == 2 and ("反查" in method or "reverse" in method.lower()):
             reverse = True
         ids = audit.get("document_ids")
         _require(isinstance(ids, list) and set(ids) == set(document_ids), "每一遍核对都要覆盖全部依据文件")
@@ -247,7 +259,7 @@ def instances(catalog: dict, cases: list[dict]) -> list[dict]:
             doc, unit = units[unit_id]
             pages = [para["page"] for para in unit["paragraphs"] if para.get("page")]
             if not pages:
-                locator = "相关段落"
+                locator = "；".join(para.get("locator") or ", ".join(para["block_ids"]) for para in unit["paragraphs"])
             elif pages[0] == pages[-1]:
                 locator = f"第 {pages[0]} 页"
             else:
@@ -268,6 +280,10 @@ def instances(catalog: dict, cases: list[dict]) -> list[dict]:
             })
         rounds = clause["rounds"] or [None]
         targets = [{"key": "batch", "task_id": "", "revision": ""}] if clause["scope"] == "batch" else cases
+        if clause.get("task_ids") is not None:
+            unknown = set(clause["task_ids"]) - {case["task_id"] for case in cases}
+            _require(not unknown, f"{clause['id']} 引用了本次提交之外的题号: {sorted(unknown)}")
+            targets = [case for case in targets if case["task_id"] in clause["task_ids"]]
         for case in targets:
             for rnd in rounds:
                 suffix = rnd or "all"

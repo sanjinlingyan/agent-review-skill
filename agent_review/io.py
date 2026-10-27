@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import stat
 import tempfile
 import zipfile
@@ -140,6 +141,8 @@ def confined(root: Path, value: str) -> Path:
 
 
 def safe_extract(archive: Path, dest: Path) -> None:
+    if not zipfile.is_zipfile(archive):
+        raise ReviewError(f"不是有效的 ZIP: {archive.name}")
     dest.mkdir(parents=True, exist_ok=False)
     with zipfile.ZipFile(archive) as package:
         for info in package.infolist():
@@ -152,9 +155,13 @@ def safe_extract(archive: Path, dest: Path) -> None:
             if stat.S_ISLNK(mode):
                 raise ReviewError(f"压缩包含链接: {info.filename}")
             target = confined(dest, name)
+            if target.exists():
+                raise ReviewError(f"压缩包文件路径重复或冲突: {info.filename}")
             target.parent.mkdir(parents=True, exist_ok=True)
             with package.open(info) as source, target.open("wb") as sink:
-                sink.write(source.read())
+                shutil.copyfileobj(source, sink)
+            if os.name != "nt" and mode & 0o111:
+                target.chmod(0o755)
     files(dest)
 
 

@@ -41,7 +41,11 @@ python scripts/review.py demo --out <仓库外目录>
 
 文本文件的 `units` 引用清单中的 `paragraph_ids`。PDF 在文件条目里提供 `paragraphs`，每段含 `page` 和 `text`。附件的 `role` 为 `asset`，并写 `reason`。
 
+所有文件的 `units[].id` 必须全局唯一，建议使用 `d-01-u-01` 这样的前缀。Word、Excel、演示文稿和 HTML 依据标为 `manual`，须由 Agent 阅读原件后提供 `paragraphs`，每段包含 `text` 和 `locator`（章节、表格单元格或版面位置），段落编号依次为 `g1`、`g2`。未抽取时保持受阻，不能作为附件绕过。人工抽取仍需逐页或逐表核对，脚本不会证明其完整性。
+
 条款字段：`id`、`title`、`text`、`accept`、`strength`（required / conditional / recommendation）、`scope`（case / batch）、`rounds`、`actions`、`evidence_required`、`unit_ids`、`applicability`。`applicability.decision` 只能是 included 或 excluded，并带理由和依据。条件义务在纳入时要写 `condition`。
+
+`case` 条款可增加 `task_ids: ["DEMO-001"]`，只对列出的题号实例化；省略表示对本次全部题目适用。题号须与 `run.json` 一致，空数组或未知题号报错。不同题触发条件不同时，分成各自带 `task_ids` 的条款并记录理由，不能把一题的专用标准扩展到整个批次。ZIP 没有身份记录时以 ZIP 文件名（不含扩展名）作为题号。
 
 `coverage_audits` 至少两遍，包含 pass 1 和 pass 2，第二遍方法含“反查”。`fidelity_overrides` 只在有明确裁决时使用，写 `clause_id`、`added` 或 `weakened`，以及 `basis`。
 
@@ -67,6 +71,8 @@ python scripts/review.py demo --out <仓库外目录>
 ```
 
 路径相对名单文件。名单和提交不一致时，在 `results.json` 写 `batch_resolution`：`missing_ids`、`extra_ids`、`decision` 和 `reason`。确认在范围内缺交用 `in-scope-missing`。确认不在本次范围用 `out-of-scope`。没有正式名单时不能出批次报告。
+
+如果提交包含范围外题目，必须从本次输入名单移除并新建运行，不能只写 `out-of-scope` 而仍让其进入验收分母。`status` 会检查批次差额、对照记录和模型更换要求；定稿后返回 `phase: finalized` 和正式报告路径。代码、审查 Skill 或规则文档变化后须新建运行。
 
 ## 执行计划
 

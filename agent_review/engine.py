@@ -23,8 +23,11 @@ UNCLEAR = ("未明", "待定", "不清楚", "未知", "无法确定")
 
 def implementation_sha256() -> str:
     digest = hashlib.sha256()
-    for path in sorted((REPO / "agent_review").glob("*.py")):
-        digest.update(path.name.encode())
+    paths = [*(REPO / "agent_review").glob("*.py"), REPO / "scripts" / "review.py",
+             REPO / "AGENTS.md", REPO / "skills" / "agent-review" / "SKILL.md",
+             *(REPO / "references").glob("*.md")]
+    for path in sorted(paths):
+        digest.update(path.relative_to(REPO).as_posix().encode())
         digest.update(path.read_bytes())
     return digest.hexdigest()
 
@@ -143,6 +146,8 @@ def prepare(pairs, standards: Path, out: Path | None = None, *, batch_path: Path
             raise ReviewError("提交、原题和依据必须彼此独立")
         seen.add(submission_dir.resolve())
         task_id, revision = _identity(submission_dir)
+        if submission_archive and not any((submission_dir / name).is_file() for name in ("record.json", "task/record.json")):
+            task_id = Path(submission_archive["path"]).stem
         cases.append({
             "key": key, "task_id": task_id, "revision": revision,
             "submission": fingerprint(submission_dir),
@@ -179,6 +184,8 @@ def _load(run: Path):
     state = read_json(run / "_internal" / "run.json")
     if state.get("schema") != "agent-review.run.v1" or state.get("run_id") != run.name:
         raise ReviewError("运行目录与冻结身份不一致")
+    if state.get("implementation_sha256") != implementation_sha256():
+        raise ReviewError("审查代码已变化，请新建运行")
     _verify(state)
     state["run_path"] = str(run)
     return run, state
@@ -281,6 +288,8 @@ def _batch_rows(state, payload, run: Path):
         raise ReviewError("批次差额的理由未写明，条件未明不能排除")
     decision = resolution.get("decision")
     if decision == "out-of-scope":
+        if extra:
+            raise ReviewIncomplete("提交中包含范围外题目，请移除后新建运行，避免进入验收分母")
         return []
     if decision != "in-scope-missing" or not missing or extra:
         raise ReviewError("批次差额须明确为范围内缺交，或确认不在本次范围")
@@ -377,6 +386,13 @@ def _documents(catalog, extra):
 
 def status(run: Path) -> dict:
     run, state = _load(run)
+    reports = [(run / name).is_file() for name in ("review.html", "repair.md")]
+    if any(reports):
+        if not all(reports):
+            raise ReviewError("正式报告不完整，请保留本次运行并新建运行")
+        metrics = read_json(run / "_internal" / "metrics.json")
+        return {**metrics, "phase": "finalized", "formal_output": True,
+                "human_report": str(run / "review.html"), "agent_report": str(run / "repair.md")}
     try:
         catalog, expected = _catalog(run, state)
     except ReviewIncomplete as exc:
@@ -394,7 +410,15 @@ def status(run: Path) -> dict:
     batch_scope = "single"
     if state["batch"]:
         batch_scope = "confirmed" if scope.get("expected_ids") else "unresolved"
-    ready = completed == len(expected) and not blockers and batch_scope != "unresolved"
+    ready = bool(payload) and completed == len(expected) and not blockers and batch_scope != "unresolved"
+    if ready:
+        try:
+            extra = _batch_rows(state, payload, run)
+            _comparison(run, rows + extra)
+            _model_change(run, rows + extra)
+        except ReviewIncomplete as exc:
+            ready = False
+            blockers.append({"reason": str(exc), "owner": "reviewer", "next_action": "完成范围对账后再定稿"})
     return {
         "run_id": state["run_id"], "phase": "ready_for_finalization" if ready else "review_in_progress",
         "review_completed": False, "formal_output": False, "fingerprint_ok": True,

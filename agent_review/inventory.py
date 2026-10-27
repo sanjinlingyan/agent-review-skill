@@ -17,6 +17,8 @@ def kind_of(path: Path) -> str:
         return "text"
     if suffix == ".pdf":
         return "pdf"
+    if suffix in {".doc", ".docx", ".odt", ".rtf", ".xlsx", ".xls", ".pptx", ".ppt", ".html", ".htm"}:
+        return "manual"
     return "asset"
 
 

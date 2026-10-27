@@ -20,7 +20,7 @@ description: >-
 
 1. 定位题号、版本和依据文件。不能确定时一次问完。不要按修改时间猜版本。
 2. 运行 `python scripts/review.py run --submission "<交付>" --standards "<依据>"`。批次改用 `--batch`，名单里写每题的提交路径。
-3. 阅读 `_internal/source-inventory.json`。按段落写 `catalog.json`。一段里的多项义务拆开；换行不新增段落。建议不进分母。其他题和未触发条件写明排除理由。条件未明就不要排除。
+3. 阅读 `_internal/source-inventory.json`。按段落写 `catalog.json`，语义单元编号跨文件唯一。PDF 和 `manual` 依据先阅读原件并抽取带定位的段落，不能直接当附件排除。一段里的多项义务拆开；换行不新增段落。建议不进分母。批次里的逐题要求用 `task_ids` 限定题号。其他题和未触发条件写明排除理由。条件未明就不要排除。
 4. 两遍核对都记在 `coverage_audits` 里，审查者都是你自己。第二遍的方法写“从原文反查”。
 5. 运行 `status --run`。按 `_internal/obligations.json` 的实例阅读交付正文、图和记录，写 `results.json`。判断规则见 `references/judgment.md`。
 6. 需要运行程序时，先看入口和读写范围，把计划写成 JSON，再 `execute`。没跑过的不要写成实测。
