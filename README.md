@@ -1,0 +1,62 @@
+# Agent Review
+
+**把仓库链接、交付路径和甲方依据交给 Coding Agent，得到一份甲方验收报告、一份乙方修复单。**
+
+这条路径阅读官方原文和交付内容，判断适用义务是否满足。Review Gate 继续负责交付结构、任务摘要和工程诊断。两份报告的阅读方式与 Review Gate 相同：`review.html` 给甲方，`repair.md` 给乙方。
+
+参考实现：[sanjinlingyan/review-gate](https://github.com/sanjinlingyan/review-gate) `52083e4cca6439e422edb9acc73708c49166d9fe`。复用范围见 [references/reuse.md](references/reuse.md)。
+
+## 直接这样用
+
+```text
+请使用 https://github.com/sanjinlingyan/agent-review-skill 审查这份交付。
+
+待审提交：<本机交付目录或 ZIP>
+甲方依据：<本地官方标准及裁决所在目录>
+原始题目：<原题目录；如可从材料唯一定位，可省略>
+输出位置：<仓库外的目录；可省略>
+
+请读取仓库 README、AGENTS 和 skills/agent-review/SKILL.md，按官方原始标准完成
+本次提交版本的交付质量审查。必要时在受控副本上执行程序与控制。
+全部适用项审完后，直接交付 review.html 和 repair.md。
+```
+
+用户不手写条款 JSON。Agent 从原文和交付建立内部清单并做判断。批次另给正式名单，不能把目录里的所有题目自动当成本次范围。
+
+## 你会得到
+
+| 文件 | 谁看 | 先看到什么 |
+|---|---|---|
+| `review.html` | 甲方 | 总体结论、审查完成率、验收通过率；按文件、章节、提炼要求阅读 |
+| `repair.md` | 乙方 Agent | 未通过项的依据、缺陷、责任、修改范围和复验条件 |
+
+默认输出在仓库旁的 `.agent-review/runs/<run_id>/`。正式报告只在全部适用项完成后出现。审查受阻时只反馈进度、原因和下一步。
+
+```sh
+python scripts/review.py run --submission "<交付>" --standards "<依据>"
+python scripts/review.py status --run "<运行目录>"
+python scripts/review.py execute --run "<运行目录>" --plan "<已审阅的计划.json>"
+python scripts/review.py finalize --run "<运行目录>"
+```
+
+命令返回 0 只表示这次操作完成，不表示验收通过。输入错误返回 2。审查还没完成就要求正式报告时返回 3。
+
+## 审查怎么做
+
+Agent 先核对官方文件的身份、版本和引用，再按完整段落、列表项和表格建立义务。换行不增加义务；一段里的多项独立义务分开判断。建议、其他题目和未触发条件不进入验收分母。条件没查清不能悄悄排除。
+
+然后阅读交付里的正文、图、记录和实现。文件存在、自报通过、退出码 0、控制全过或模型高分，都不能抵消另一项必需义务。评分器的 `unknown` 按基础设施、解析、规则歧义或核心判定能力分开记录，前三类不能直接改成乙方未通过。
+
+需要跑程序时，先看入口和读写范围，再对交付副本执行已审阅的计划。没有执行的内容不能写成实测。宿主副本不是操作系统沙箱。
+
+## 运行条件
+
+Python 3.10 或以上，核心只用标准库。媒体和原生文件按任务使用本机已有工具，并在证据里记录。真实标准、交付、日志和报告放在仓库外。
+
+```sh
+python -m unittest discover -s tests -v
+python tools/check_public.py --tracked
+python scripts/review.py demo --out "<仓库外的新目录>"
+```
+
+演示材料是虚构的。MIT License。
